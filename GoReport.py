@@ -63,6 +63,8 @@ def GoReport():
 provide a comma-separated list of IDs (e.g. -id #,#,#).", required=True)
 @click.option('--format', type=click.Choice(['excel', 'word', 'quick']), help="Use this option to \
 choose between report formats.", required=True)
+@click.option('--template', type=click.Path(exists=True, readable=True, resolve_path=True),
+              help="Path to the Word template file to use for docx reports. Defaults to template.docx in the current directory.")
 @click.option('--combine', is_flag=True, help="Combine all results into one report. The first \
 campaign ID will be used for information such as campaign name, dates, and URL.", required=False)
 @click.option('--complete', is_flag=True, help="Optionally mark the campaign as complete in \
@@ -76,7 +78,7 @@ the config file.", required=False)
 @click.option('-v', '--verbose', is_flag=True, help="Sets verbose to true so GoReport will \
 display some additional feedback, such as flagging IP mis-matches.", required=False)
 @click.pass_context
-def parse_options(self, id, format, combine, complete, config, google, verbose):
+def parse_options(self, id, format, template, combine, complete, config, google, verbose):
     """GoReport uses the Gophish API to connect to your Gophish instance using the
     IP address, port, and API key for your installation. This information is provided
     in the gophish.config file and loaded at runtime. GoReport will collect details
@@ -90,7 +92,7 @@ def parse_options(self, id, format, combine, complete, config, google, verbose):
     # Print the Gophish banner
     banners.print_banner()
     # Create a new Goreport object that will use the specified report format
-    gophish = goreport.Goreport(format, config, google, verbose)
+    gophish = goreport.Goreport(format, config, google, verbose, template)
     # Execute reporting for the provided list of IDs
     gophish.run(id, combine, complete)
 

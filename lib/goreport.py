@@ -99,7 +99,7 @@ class Goreport(object):
     xlsx_header_bg_color = "#0085CA"
     xlsx_header_font_color = "#FFFFFF"
 
-    def __init__(self, report_format, config_file, google, verbose):
+    def __init__(self, report_format, config_file, google, verbose, template=None):
         """
         Initiate the connection to the Gophish server with the provided host, port,
         and API key and prepare to use the external APIs.
@@ -150,6 +150,7 @@ class Goreport(object):
         self.google = google
         self.verbose = verbose
         self.report_format = report_format
+        self.template_file = template if template else "template.docx"
         # Connect to the Gophish API
         # NOTE: This step succeeds even with a bad API key, so the true test is fetching an ID
         print(f"[+] Connecting to Gophish at {GP_HOST}")
@@ -579,14 +580,14 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
             self.write_xlsx_report()
         elif self.report_format == "word":
             print("[+] Building the report -- you selected a Word/docx report.")
-            print("[+] Looking for the template.docx to be used for the Word report.")
-            if os.path.isfile("template.docx"):
+            print(f"[+] Looking for the {self.template_file} to be used for the Word report.")
+            if os.path.isfile(self.template_file):
                 print("[+] Template was found -- proceeding with report generation...")
                 print("L.. Word reports can take a while if you had a lot of recipients.")
                 self.output_word_report = self._build_output_word_file_name()
                 self.write_word_report()
             else:
-                print("[!] Could not find the template document! Make sure 'template.docx' is in the GoReport directory.")
+                print(f"[!] Could not find the template document! Make sure '{self.template_file}' exists and is readable.")
                 sys.exit()
         elif self.report_format == "quick":
             print("[+] Quick report stats:")
@@ -1048,7 +1049,7 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
     def write_word_report(self):
         """Assemble and output the Word docx file report."""
         # Create document writer using the template and a style editor
-        d = Document("template.docx")
+        d = Document(self.template_file)
         styles = d.styles
 
         # Create a custom styles for table cells
