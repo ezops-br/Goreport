@@ -99,7 +99,7 @@ class Goreport(object):
     xlsx_header_bg_color = "#0085CA"
     xlsx_header_font_color = "#FFFFFF"
 
-    def __init__(self, report_format, config_file, google, verbose, template=None):
+    def __init__(self, report_format, config_file, google, verbose, template=None, filename=None):
         """
         Initiate the connection to the Gophish server with the provided host, port,
         and API key and prepare to use the external APIs.
@@ -150,6 +150,7 @@ class Goreport(object):
         self.google = google
         self.verbose = verbose
         self.report_format = report_format
+        self.filename = filename
         self.template_file = template if template else "template.docx"
         # Connect to the Gophish API
         # NOTE: This step succeeds even with a bad API key, so the true test is fetching an ID
@@ -619,13 +620,19 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
     def _build_output_xlsx_file_name(self):
         """Create the xlsx report name."""
         safe_name = "".join([c for c in self.cam_name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-        xlsx_report = f"Gophish Results for {safe_name}.xlsx"
+        if self.filename:
+            xlsx_report = f"{self.filename}.xlsx"
+        else:
+            xlsx_report = f"Gophish Results for {safe_name}.xlsx"
         return xlsx_report
 
     def _build_output_word_file_name(self):
         """Create the docx report name."""
         safe_name = "".join([c for c in self.cam_name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-        word_report = f"Gophish Results for {safe_name}.docx"
+        if self.filename:
+            word_report = f"{self.filename}.docx"
+        else:
+            word_report = f"Gophish Results for {safe_name}.docx"
         return word_report
 
     def _set_word_column_width(self, column, width):

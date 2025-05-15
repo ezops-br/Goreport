@@ -77,8 +77,10 @@ to match Gophish event coordinates with an address. Requires a Geolocate API key
 the config file.", required=False)
 @click.option('-v', '--verbose', is_flag=True, help="Sets verbose to true so GoReport will \
 display some additional feedback, such as flagging IP mis-matches.", required=False)
+@click.option('--filename', type=click.STRING, is_flag=False, help="Name to the output file \
+generated for reports. Defaults to 'Gophish Results for <campaign's ID>' in the current directory.")
 @click.pass_context
-def parse_options(self, id, format, template, combine, complete, config, google, verbose):
+def parse_options(self, id, format, template, combine, complete, config, google, verbose, filename):
     """GoReport uses the Gophish API to connect to your Gophish instance using the
     IP address, port, and API key for your installation. This information is provided
     in the gophish.config file and loaded at runtime. GoReport will collect details
@@ -92,7 +94,7 @@ def parse_options(self, id, format, template, combine, complete, config, google,
     # Print the Gophish banner
     banners.print_banner()
     # Create a new Goreport object that will use the specified report format
-    gophish = goreport.Goreport(format, config, google, verbose, template)
+    gophish = goreport.Goreport(format, config, google, verbose, template, filename)
     # Execute reporting for the provided list of IDs
     gophish.run(id, combine, complete)
 
