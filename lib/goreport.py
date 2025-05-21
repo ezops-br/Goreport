@@ -25,7 +25,11 @@ from collections import Counter
 # 3rd Party Libraries
 import requests
 import xlsxwriter
+import tempfile
+import os
+from playwright.sync_api import sync_playwright
 from docx import Document
+from docx.shared import Inches
 from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Cm, Pt, RGBColor
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -643,6 +647,30 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         """
         for cell in column.cells:
             cell.width = width
+    
+    def render_email_png(self, html_content):
+        try:
+            fd, html_path = tempfile.mkstemp(suffix=".html")
+
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
+            output_path = html_path.replace(".html", ".png")
+
+            with sync_playwright() as sync_p:
+                browser = sync_p.chromium.launch()
+                page = browser.new_page()
+
+                page.set_content(html_content)
+                page.wait_for_load_state("networkidle")
+                page.screenshot(path=output_path, full_page=True)
+
+                browser.close()
+
+                return output_path
+        except Exception as e:
+            print(f"Error generating screenshot: {e}")
+            return None
 
     def write_xlsx_report(self):
         """Assemble and output the xlsx file report.
@@ -1083,6 +1111,20 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         cell_text_miss_font.size = Pt(12)
         cell_text_miss_font.bold = True
         cell_text_miss_font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+
+        if self.template.html:
+            screenshot = self.render_email_png(self.template.html)
+
+        for paragraph in d.paragraphs:
+            if '{{sender}}' in paragraph.text:
+                paragraph.text = paragraph.text.replace('{{sender}}', self.cam_from_address)
+            if '{{subject}}' in paragraph.text:
+                paragraph.text = paragraph.text.replace('{{subject}}', self.cam_subject_line)
+            if '{{screenshot}}' in paragraph.text:
+                if self.template.html and screenshot:
+                    run = paragraph.clear()
+                    run = paragraph.add_run()
+                    run.add_picture(screenshot, width=Inches(6))
 
         # Write a campaign summary at the top of the report
         d.add_heading("Executive Summary", 1)
