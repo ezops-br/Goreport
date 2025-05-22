@@ -663,7 +663,16 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
 
                 page.set_content(html_content)
                 page.wait_for_load_state("networkidle")
-                page.screenshot(path=output_path, full_page=True)
+                page.screenshot(
+                    path=output_path,
+                    full_page=True,
+                    clip={
+                        "x": 0,
+                        "y": 0,
+                        "width": 800,
+                        "height": 500
+                    }
+                )
 
                 browser.close()
 
@@ -671,6 +680,20 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         except Exception as e:
             print(f"Error generating screenshot: {e}")
             return None
+    
+    def replace_and_bold_tag_in_paragraph(self, paragraph, tag_to_find, replacement_value):
+        if tag_to_find in paragraph.text:
+            parts = paragraph.text.split(tag_to_find)
+            
+            paragraph.clear()
+
+            for i, part in enumerate(parts):
+                if part:
+                    paragraph.add_run(part)
+                
+                if i < len(parts) - 1:
+                    run = paragraph.add_run(replacement_value)
+                    run.bold = True
 
     def write_xlsx_report(self):
         """Assemble and output the xlsx file report.
@@ -1115,11 +1138,25 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         if self.template.html:
             screenshot = self.render_email_png(self.template.html)
 
+        for table in d.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        if '{{sender}}' in paragraph.text:
+                            self.replace_and_bold_tag_in_paragraph(
+                                paragraph,
+                                '{{sender}}',
+                                f"{self.cam_name} <{self.cam_from_address}>",
+                            )
+
+                        if '{{subject}}' in paragraph.text:
+                            self.replace_and_bold_tag_in_paragraph(
+                                paragraph,
+                                '{{subject}}',
+                                self.cam_subject_line,
+                            )
+
         for paragraph in d.paragraphs:
-            if '{{sender}}' in paragraph.text:
-                paragraph.text = paragraph.text.replace('{{sender}}', self.cam_from_address)
-            if '{{subject}}' in paragraph.text:
-                paragraph.text = paragraph.text.replace('{{subject}}', self.cam_subject_line)
             if '{{screenshot}}' in paragraph.text:
                 if self.template.html and screenshot:
                     run = paragraph.clear()
