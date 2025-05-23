@@ -34,6 +34,7 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Cm, Pt, RGBColor
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from user_agents import parse
+from deep_translator import GoogleTranslator
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -173,6 +174,8 @@ class Goreport(object):
             "Email Link Clicked": "Lien d'e-mail cliqué",
             "Still Active": "Toujours actif",
             "Captured Credentials": "Identifiants capturés",
+            "Not Used": "Non utilisé",
+            "None Used": "Aucun utilisé",
         }
     }
 
@@ -236,8 +239,11 @@ class Goreport(object):
         print(f"L.. The API Authorization endpoint is: {GP_HOST}/api/campaigns/?api_key={API_KEY}")
         self.api = Gophish(API_KEY, host=GP_HOST, verify=False)
 
-    def translate_text(self, text):
+    def translate_text(self, text, use_translator=False):
         if self.lang == "fr":
+            if use_translator:
+                return GoogleTranslator(source='auto', target="fr").translate(text)
+
             return self.TRANSLATIONS["fr"].get(text, text)
         return text
 
@@ -499,16 +505,16 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         self.cam_template_name = self.template.name
         self.cam_template_attachments = self.template.attachments
         if self.cam_template_attachments == []:
-            self.cam_template_attachments = "None Used"
+            self.cam_template_attachments = self.translate_text("None Used")
 
         # Collect the landing page information
         self.page = self.campaign.page
         self.cam_page_name = self.page.name
         self.cam_redirect_url = self.page.redirect_url
         if self.cam_redirect_url == "":
-            self.cam_redirect_url = "Not Used"
-        self.cam_capturing_passwords = self.page.capture_passwords
-        self.cam_capturing_credentials = self.page.capture_credentials
+            self.cam_redirect_url = self.translate_text("Not Used")
+        self.cam_capturing_passwords = self.translate_text(str(self.page.capture_passwords), True)
+        self.cam_capturing_credentials = self.translate_text(str(self.page.capture_credentials), True)
 
     def collect_all_campaign_info(self, combine_reports):
         """Collect the campaign's details and set values for each of the variables."""
@@ -828,7 +834,7 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         worksheet.write(row, col + 1, f"{self.cam_name}", wrap_format)
         row += 1
         worksheet.write(row, col, self.translate_text("Status"), bold_format)
-        worksheet.write(row, col + 1, f"{self.cam_status}", wrap_format)
+        worksheet.write(row, col + 1, f"{self.translate_text(self.cam_status, True)}", wrap_format)
         row += 1
         worksheet.write(row, col, self.translate_text("Created"), bold_format)
         worksheet.write(row, col + 1, f"{self.created_date}", wrap_format)
@@ -1254,7 +1260,7 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         else:
             completed_status = self.translate_text("Still Active")
         p.add_run(f"""
-{self.translate_text("Status")}: {self.cam_status}
+{self.translate_text("Status")}: {self.translate_text(self.cam_status, True)}
 {self.translate_text("Created")}: {self.created_date.split('T')[1].split('.')[0]} {self.translate_text("on")} {self.created_date.split('T')[0]}
 {self.translate_text("Started")}: {self.launch_date.split('T')[1].split('.')[0]} {self.translate_text("on")} {self.launch_date.split('T')[0]}
 {self.translate_text("Completed")}: {completed_status}
