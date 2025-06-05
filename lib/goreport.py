@@ -25,11 +25,16 @@ from collections import Counter
 # 3rd Party Libraries
 import requests
 import xlsxwriter
+import tempfile
+import os
+from playwright.sync_api import sync_playwright
 from docx import Document
+from docx.shared import Inches
 from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Cm, Pt, RGBColor
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from user_agents import parse
+from deep_translator import GoogleTranslator
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -99,7 +104,82 @@ class Goreport(object):
     xlsx_header_bg_color = "#0085CA"
     xlsx_header_font_color = "#FFFFFF"
 
-    def __init__(self, report_format, config_file, google, verbose, template=None):
+    # Translation Dictionary For French
+    TRANSLATIONS = {
+        "fr": {
+            "Campaign Results For:": "Résultats de la campagne pour :",
+            "Status": "Statut",
+            "Created": "Créé",
+            "Started": "Démarré",
+            "Completed": "Terminé",
+            "Campaign Details": "Détails de la campagne",
+            "From": "Expéditeur",
+            "Subject": "Sujet",
+            "Phish URL": "URL de phishing",
+            "Redirect URL": "URL de redirection",
+            "Attachment(s)": "Pièce(s) jointe(s)",
+            "Captured Passwords": "Mots de passe capturés",
+            "Stored Passwords": "Mots de passe enregistrés",
+            "High Level Results": "Résultats généraux",
+            "Total Targets": "Cibles totales",
+            "The following totals indicate how many events of each type Gophish recorded:": "Les totaux suivants indiquent le nombre d'événements de chaque type enregistrés par Gophish :",
+            "Total Open Events": "Total des ouvertures",
+            "Total Click Events": "Total des clics",
+            "Total Report Events": "Total des signalements",
+            "Total Submitted Data Events": "Total des soumissions de données",
+            "The following totals indicate how many targets participated in each event type:": "Les totaux suivants indiquent combien de cibles ont participé à chaque type d'événement :",
+            "Individuals Who Opened": "Personnes ayant ouvert",
+            "Individuals Who Clicked": "Personnes ayant cliqué",
+            "Individuals Who Reported": "Personnes ayant signalé",
+            "Individuals Who Submitted": "Personnes ayant soumis des données",
+            "Summary of Events": "Résumé des événements",
+            "Email Address": "Adresse e-mail",
+            "Open": "Ouverture",
+            "Click": "Clic",
+            "Creds": "Identifiants",
+            "Report": "Signalement",
+            "OS": "Système d'exploitation",
+            "Browser": "Navigateur",
+            "Detailed Analysis": "Analyse détaillée",
+            "Time": "Heure",
+            "IP": "IP",
+            "Location": "Localisation",
+            "Operating System": "Système d'exploitation",
+            "Data Captured": "Données capturées",
+            "Recorded Browsers Based on User-Agents:": "Navigateurs enregistrés selon les User-Agents :",
+            "Seen": "Vu",
+            "Record OS From Browser User-Agents:": "Systèmes d'exploitation enregistrés selon les User-Agents :",
+            "Recorded Locations from IPs:": "Localisations enregistrées à partir des IPs :",
+            "Locations": "Localisations",
+            "Visits": "Visites",
+            "Recorded IPs:": "IPs enregistrées :",
+            "IP Address": "Adresse IP",
+            "Recorded IPs and Locations:": "IPs et localisations enregistrées :",
+            "Campaign Results For": "Résultats de la campagne pour",
+            "Quick report stats:": "Statistiques du rapport rapide :",
+            "Executive Summary": "Résumé exécutif",
+            "Summary of Events": "Résumé des événements",
+            "Detailed Findings": "Résultats détaillés",
+            "Statistics": "Statistiques",
+            "The following table summarizes who opened and clicked on emails sent in this campaign.": "Le tableau suivant résume qui a ouvert et cliqué sur les e-mails envoyés dans cette campagne.",
+            "The following table shows the browsers seen:": "Le tableau suivant montre les navigateurs observés :",
+            "The following table shows the operating systems seen:": "Le tableau suivant montre les systèmes d'exploitation observés :",
+            "The following table shows the locations seen:": "Le tableau suivant montre les localisations observées :",
+            "The following table shows the IP addresses captured:": "Le tableau suivant montre les adresses IP capturées :",
+            "The following table shows the IP addresses matched with geolocation data:": "Le tableau suivant montre les adresses IP associées aux données de géolocalisation :",
+            "Email sent on": "E-mail envoyé le",
+            "at": "à",
+            "Data": "Données",
+            "on": "le",
+            "Email Link Clicked": "Lien d'e-mail cliqué",
+            "Still Active": "Toujours actif",
+            "Captured Credentials": "Identifiants capturés",
+            "Not Used": "Non utilisé",
+            "None Used": "Aucun utilisé",
+        }
+    }
+
+    def __init__(self, report_format, config_file, google, verbose, template=None, filename=None, lang="en"):
         """
         Initiate the connection to the Gophish server with the provided host, port,
         and API key and prepare to use the external APIs.
@@ -150,12 +230,22 @@ class Goreport(object):
         self.google = google
         self.verbose = verbose
         self.report_format = report_format
+        self.filename = filename
+        self.lang = lang
         self.template_file = template if template else "template.docx"
         # Connect to the Gophish API
         # NOTE: This step succeeds even with a bad API key, so the true test is fetching an ID
         print(f"[+] Connecting to Gophish at {GP_HOST}")
         print(f"L.. The API Authorization endpoint is: {GP_HOST}/api/campaigns/?api_key={API_KEY}")
         self.api = Gophish(API_KEY, host=GP_HOST, verify=False)
+
+    def translate_text(self, text, use_translator=False):
+        if self.lang == "fr":
+            if use_translator:
+                return GoogleTranslator(source='auto', target="fr").translate(text)
+
+            return self.TRANSLATIONS["fr"].get(text, text)
+        return text
 
     def run(self, id_list, combine_reports, set_complete_status):
         """Run everything to process the target campaign."""
@@ -415,16 +505,16 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         self.cam_template_name = self.template.name
         self.cam_template_attachments = self.template.attachments
         if self.cam_template_attachments == []:
-            self.cam_template_attachments = "None Used"
+            self.cam_template_attachments = self.translate_text("None Used")
 
         # Collect the landing page information
         self.page = self.campaign.page
         self.cam_page_name = self.page.name
         self.cam_redirect_url = self.page.redirect_url
         if self.cam_redirect_url == "":
-            self.cam_redirect_url = "Not Used"
-        self.cam_capturing_passwords = self.page.capture_passwords
-        self.cam_capturing_credentials = self.page.capture_credentials
+            self.cam_redirect_url = self.translate_text("Not Used")
+        self.cam_capturing_passwords = self.translate_text(str(self.page.capture_passwords), True)
+        self.cam_capturing_credentials = self.translate_text(str(self.page.capture_credentials), True)
 
     def collect_all_campaign_info(self, combine_reports):
         """Collect the campaign's details and set values for each of the variables."""
@@ -619,13 +709,19 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
     def _build_output_xlsx_file_name(self):
         """Create the xlsx report name."""
         safe_name = "".join([c for c in self.cam_name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-        xlsx_report = f"Gophish Results for {safe_name}.xlsx"
+        if self.filename:
+            xlsx_report = f"{self.filename}.xlsx"
+        else:
+            xlsx_report = f"Gophish Results for {safe_name}.xlsx"
         return xlsx_report
 
     def _build_output_word_file_name(self):
         """Create the docx report name."""
         safe_name = "".join([c for c in self.cam_name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
-        word_report = f"Gophish Results for {safe_name}.docx"
+        if self.filename:
+            word_report = f"{self.filename}.docx"
+        else:
+            word_report = f"Gophish Results for {safe_name}.docx"
         return word_report
 
     def _set_word_column_width(self, column, width):
@@ -636,6 +732,53 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         """
         for cell in column.cells:
             cell.width = width
+    
+    def render_email_png(self, html_content):
+        try:
+            fd, html_path = tempfile.mkstemp(suffix=".html")
+
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(html_content)
+
+            output_path = html_path.replace(".html", ".png")
+
+            with sync_playwright() as sync_p:
+                browser = sync_p.chromium.launch()
+                page = browser.new_page()
+
+                page.set_content(html_content)
+                page.wait_for_load_state("networkidle")
+                page.screenshot(
+                    path=output_path,
+                    full_page=True,
+                    clip={
+                        "x": 0,
+                        "y": 0,
+                        "width": 800,
+                        "height": 500
+                    }
+                )
+
+                browser.close()
+
+                return output_path
+        except Exception as e:
+            print(f"Error generating screenshot: {e}")
+            return None
+    
+    def replace_and_bold_tag_in_paragraph(self, paragraph, tag_to_find, replacement_value):
+        if tag_to_find in paragraph.text:
+            parts = paragraph.text.split(tag_to_find)
+            
+            paragraph.clear()
+
+            for i, part in enumerate(parts):
+                if part:
+                    paragraph.add_run(part)
+                
+                if i < len(parts) - 1:
+                    run = paragraph.add_run(replacement_value)
+                    run.bold = True
 
     def write_xlsx_report(self):
         """Assemble and output the xlsx file report.
@@ -687,47 +830,47 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
 
         worksheet.set_column(0, 10, 62)
 
-        worksheet.write(row, col, "Campaign Results For:", bold_format)
+        worksheet.write(row, col, self.translate_text("Campaign Results For:"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_name}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Status", bold_format)
-        worksheet.write(row, col + 1, f"{self.cam_status}", wrap_format)
+        worksheet.write(row, col, self.translate_text("Status"), bold_format)
+        worksheet.write(row, col + 1, f"{self.translate_text(self.cam_status, True)}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Created", bold_format)
+        worksheet.write(row, col, self.translate_text("Created"), bold_format)
         worksheet.write(row, col + 1, f"{self.created_date}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Started", bold_format)
+        worksheet.write(row, col, self.translate_text("Started"), bold_format)
         worksheet.write(row, col + 1, f"{self.launch_date}", wrap_format)
         row += 1
         if self.cam_status == "Completed":
-            worksheet.write(row, col, "Completed", bold_format)
+            worksheet.write(row, col, self.translate_text("Completed"), bold_format)
             worksheet.write(row, col + 1, f"{self.completed_date}", wrap_format)
             row += 1
 
         worksheet.write(row, col, "")
         row += 1
 
-        worksheet.write(row, col, "Campaign Details", bold_format)
+        worksheet.write(row, col, self.translate_text("Campaign Details"), bold_format)
         row += 1
-        worksheet.write(row, col, "From", bold_format)
+        worksheet.write(row, col, self.translate_text("From"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_from_address}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Subject", bold_format)
+        worksheet.write(row, col, self.translate_text("Subject"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_subject_line}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Phish URL", bold_format)
+        worksheet.write(row, col, self.translate_text("Phish URL"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_url}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Redirect URL", bold_format)
+        worksheet.write(row, col, self.translate_text("Redirect URL"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_redirect_url}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Attachment(s)", bold_format)
+        worksheet.write(row, col, self.translate_text("Attachment(s)"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_template_attachments}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Captured Passwords", bold_format)
+        worksheet.write(row, col, self.translate_text("Captured Passwords"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_capturing_credentials}", wrap_format)
         row += 1
-        worksheet.write(row, col, "Stored Passwords", bold_format)
+        worksheet.write(row, col, self.translate_text("Stored Passwords"), bold_format)
         worksheet.write(row, col + 1, f"{self.cam_capturing_passwords}", wrap_format)
         row += 1
 
@@ -735,39 +878,39 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         row += 1
 
         # Write a high level summary for stats
-        worksheet.write(row, col, "High Level Results", bold_format)
+        worksheet.write(row, col, self.translate_text("High Level Results"), bold_format)
         row += 1
-        worksheet.write(row, col, "Total Targets", bold_format)
+        worksheet.write(row, col, self.translate_text("Total Targets"), bold_format)
         worksheet.write(row, col + 1, self.total_targets, num_format)
         row += 1
 
-        worksheet.write(row, col, "The following totals indicate how many events of each type Gophish recorded:", wrap_format)
+        worksheet.write(row, col, self.translate_text("The following totals indicate how many events of each type Gophish recorded:"), wrap_format)
         row += 1
-        worksheet.write(row, col, "Total Opened Events", bold_format)
+        worksheet.write(row, col, self.translate_text("Total Opened Events"), bold_format)
         worksheet.write_number(row, col + 1, self.total_opened, num_format)
         row += 1
-        worksheet.write(row, col, "Total Clicked Events", bold_format)
+        worksheet.write(row, col, self.translate_text("Total Clicked Events"), bold_format)
         worksheet.write_number(row, col + 1, self.total_clicked, num_format)
         row += 1
-        worksheet.write(row, col, "Total Submitted Data Events", bold_format)
+        worksheet.write(row, col, self.translate_text("Total Submitted Data Events"), bold_format)
         worksheet.write(row, col + 1, "", wrap_format)
         row += 1
-        worksheet.write(row, col, "Total Report Events", bold_format)
+        worksheet.write(row, col, self.translate_text("Total Report Events"), bold_format)
         worksheet.write_number(row, col + 1, self.total_reported, num_format)
         row += 1
 
-        worksheet.write(row, col, "The following totals indicate how many targets participated in each event type:", wrap_format)
+        worksheet.write(row, col, self.translate_text("The following totals indicate how many targets participated in each event type:"), wrap_format)
         row += 1
-        worksheet.write(row, col, "Individuals Who Opened", bold_format)
+        worksheet.write(row, col, self.translate_text("Individuals Who Opened"), bold_format)
         worksheet.write_number(row, col + 1, self.total_unique_opened, num_format)
         row += 1
-        worksheet.write(row, col, "Individuals Who Clicked", bold_format)
+        worksheet.write(row, col, self.translate_text("Individuals Who Clicked"), bold_format)
         worksheet.write_number(row, col + 1, self.total_unique_clicked, num_format)
         row += 1
-        worksheet.write(row, col, "Individuals Who Submitted Data", bold_format)
+        worksheet.write(row, col, self.translate_text("Individuals Who Submitted Data"), bold_format)
         worksheet.write_number(row, col + 1, self.total_unique_submitted, num_format)
         row += 1
-        worksheet.write(row, col, "Individuals Who Reported", bold_format)
+        worksheet.write(row, col, self.translate_text("Individuals Who Reported"), bold_format)
         worksheet.write_number(row, col + 1, self.total_unique_reported, num_format)
         row += 1
 
@@ -780,11 +923,11 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
 
         worksheet.set_column(0, 10, 20)
 
-        worksheet.write(row, col, "Summary of Events", bold_format)
+        worksheet.write(row, col, self.translate_text("Summary of Events"), bold_format)
         row += 1
 
         header_col = 0
-        headers = ["Email Address", "Open", "Click", "Creds", "Report", "OS", "Browser"]
+        headers = [self.translate_text("Email Address"), self.translate_text("Open"), self.translate_text("Click"), self.translate_text("Creds"), self.translate_text("Report"), self.translate_text("OS"), self.translate_text("Browser")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -837,7 +980,7 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
 
         worksheet.set_column(0, 10, 40)
 
-        worksheet.write(row, col, "Detailed Analysis", bold_format)
+        worksheet.write(row, col, self.translate_text("Detailed Analysis"), bold_format)
         row += 1
 
         target_counter = 0
@@ -869,11 +1012,11 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
                         row += 1
 
                     if event.message == "Clicked Link" and event.email == target.email:
-                        worksheet.write(row, col, "Email Link Clicked", bold_format)
+                        worksheet.write(row, col, self.translate_text("Email Link Clicked"), bold_format)
                         row += 1
 
                         header_col = 0
-                        headers = ["Time", "IP", "Location", "Browser", "Operating System"]
+                        headers = [self.translate_text("Time"), self.translate_text("IP"), self.translate_text("Location"), self.translate_text("Browser"), self.translate_text("Operating System")]
                         for header in headers:
                             worksheet.write(row, header_col, header, header_format)
                             header_col += 1
@@ -913,7 +1056,7 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
                         row += 1
 
                         header_col = 0
-                        headers = ["Time", "IP", "Location", "Browser", "Operating System", "Data Captured"]
+                        headers = [self.translate_text("Time"), self.translate_text("IP"), self.translate_text("Location"), self.translate_text("Browser"), self.translate_text("Operating System"), self.translate_text("Data Captured")]
                         for header in headers:
                             worksheet.write(row, header_col, header, header_format)
                             header_col += 1
@@ -964,11 +1107,11 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
 
         worksheet.set_column(0, 10, 35)
 
-        worksheet.write(row, col, "Recorded Browsers Based on User-Agents:", bold_format)
+        worksheet.write(row, col, self.translate_text("Recorded Browsers Based on User-Agents:"), bold_format)
         row += 1
 
         header_col = 0
-        headers = ["Browser", "Seen"]
+        headers = [self.translate_text("Browser"), self.translate_text("Seen")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -982,10 +1125,10 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         worksheet.write(row, col, "")
         row += 1
 
-        worksheet.write(row, col, "Record OS From Browser User-Agents:", bold_format)
+        worksheet.write(row, col, self.translate_text("Record OS From Browser User-Agents:"), bold_format)
         row += 1
         header_col = 0
-        headers = ["Operating System", "Seen"]
+        headers = [self.translate_text("Operating System"), self.translate_text("Seen")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -999,10 +1142,10 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         worksheet.write(row, col, "")
         row += 1
 
-        worksheet.write(row, col, "Recorded Locations from IPs:", bold_format)
+        worksheet.write(row, col, self.translate_text("Recorded Locations from IPs:"), bold_format)
         row += 1
         header_col = 0
-        headers = ["Locations", "Seen"]
+        headers = [self.translate_text("Locations"), self.translate_text("Seen")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -1016,10 +1159,10 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         worksheet.write(row, col, "")
         row += 1
 
-        worksheet.write(row, col, "Recorded IPs:", bold_format)
+        worksheet.write(row, col, self.translate_text("Recorded IPs:"), bold_format)
         row += 1
         header_col = 0
-        headers = ["IP Address", "Seen"]
+        headers = [self.translate_text("IP Address"), self.translate_text("Seen")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -1030,10 +1173,10 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
             worksheet.write_number(row, col + 1, value, num_format)
             row += 1
 
-        worksheet.write(row, col, "Recorded IPs and Locations:", bold_format)
+        worksheet.write(row, col, self.translate_text("Recorded IPs and Locations:"), bold_format)
         row += 1
         header_col = 0
-        headers = ["IP Address", "Location"]
+        headers = [self.translate_text("IP Address"), self.translate_text("Location")]
         for header in headers:
             worksheet.write(row, header_col, header, header_format)
             header_col += 1
@@ -1077,97 +1220,125 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
         cell_text_miss_font.bold = True
         cell_text_miss_font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
 
+        if self.template.html:
+            screenshot = self.render_email_png(self.template.html)
+
+        for table in d.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        if '{{sender}}' in paragraph.text:
+                            self.replace_and_bold_tag_in_paragraph(
+                                paragraph,
+                                '{{sender}}',
+                                f"{self.cam_name} <{self.cam_from_address}>",
+                            )
+
+                        if '{{subject}}' in paragraph.text:
+                            self.replace_and_bold_tag_in_paragraph(
+                                paragraph,
+                                '{{subject}}',
+                                self.cam_subject_line,
+                            )
+
+        for paragraph in d.paragraphs:
+            if '{{screenshot}}' in paragraph.text:
+                if self.template.html and screenshot:
+                    run = paragraph.clear()
+                    run = paragraph.add_run()
+                    run.add_picture(screenshot, width=Inches(6))
+
         # Write a campaign summary at the top of the report
-        d.add_heading("Executive Summary", 1)
+        d.add_heading(self.translate_text("Executive Summary"), 1)
         p = d.add_paragraph()
-        run = p.add_run(f"Campaign Results For: {self.cam_name}")
+        run = p.add_run(f"{self.translate_text('Campaign Results For:')} {self.cam_name}")
         run.bold = True
         # Runs are basically "runs" of text and must be aligned like we want
         # them aligned in the report -- thus they are pushed left
         if self.cam_status == "Completed":
-            completed_status = f"Completed:\t{self.completed_date.split('T')[1].split('.')[0]} on {self.completed_date.split('T')[0]}"
+            completed_status = f"{self.completed_date.split('T')[1].split('.')[0]} {self.translate_text("on")} {self.completed_date.split('T')[0]}"
         else:
-            completed_status = "Still Active"
+            completed_status = self.translate_text("Still Active")
         p.add_run(f"""
-Status: {self.cam_status}
-Created: {self.created_date.split('T')[1].split('.')[0]} on {self.created_date.split('T')[0]}
-Started: {self.launch_date.split('T')[1].split('.')[0]} on {self.launch_date.split('T')[0]}
-Completed: {completed_status}
+{self.translate_text("Status")}: {self.translate_text(self.cam_status, True)}
+{self.translate_text("Created")}: {self.created_date.split('T')[1].split('.')[0]} {self.translate_text("on")} {self.created_date.split('T')[0]}
+{self.translate_text("Started")}: {self.launch_date.split('T')[1].split('.')[0]} {self.translate_text("on")} {self.launch_date.split('T')[0]}
+{self.translate_text("Completed")}: {completed_status}
 
 """)
         if self.cam_status == "Completed":
             print()
 
         # Write the campaign details -- email details and template settings
-        run = p.add_run("Campaign Details")
+        run = p.add_run(self.translate_text("Campaign Details"))
         run.bold = True
         p.add_run(f"""
-From: {self.cam_from_address}
-Subject: {self.cam_subject_line}
-Phish URL: {self.cam_url}
-Redirect URL: {self.cam_redirect_url}
-Attachment(s): {self.cam_template_attachments}
-Captured Credentials: {self.cam_capturing_credentials}
-Stored Passwords: {self.cam_capturing_passwords}
+{self.translate_text("From")}: {self.cam_from_address}
+{self.translate_text("Subject")}: {self.cam_subject_line}
+{self.translate_text("Phish URL")}: {self.cam_url}
+{self.translate_text("Redirect URL")}: {self.cam_redirect_url}
+{self.translate_text("Attachment(s)")}: {self.cam_template_attachments}
+{self.translate_text("Captured Credentials")}: {self.cam_capturing_credentials}
+{self.translate_text("Stored Passwords")}: {self.cam_capturing_passwords}
 
 """)
 
         # Write a high level summary for stats
-        run = p.add_run("High Level Results")
+        run = p.add_run(self.translate_text("High Level Results"))
         run.bold = True
         p.add_run(f"""
-Total Targets: {self.total_targets}
+{self.translate_text("Total Targets")}: {self.total_targets}
 
-The following totals indicate how many events of each type Gophish recorded:
-Total Open Events: {self.total_opened}
-Total Click Events: {self.total_clicked}
-Total Report Events: {self.total_reported}
-Total Submitted Data Events: {self.total_submitted}
+{self.translate_text("The following totals indicate how many events of each type Gophish recorded:")}
+{self.translate_text("Total Open Events")}: {self.total_opened}
+{self.translate_text("Total Click Events")}: {self.total_clicked}
+{self.translate_text("Total Report Events")}: {self.total_reported}
+{self.translate_text("Total Submitted Data Events")}: {self.total_submitted}
 
-The following totals indicate how many targets participated in each event type:
-Individuals Who Opened: {self.total_unique_opened}
-Individuals Who Clicked: {self.total_unique_clicked}
-Individuals Who Reported: {self.total_unique_reported}
-Individuals Who Submitted: {self.total_unique_submitted}
+{self.translate_text("The following totals indicate how many targets participated in each event type:")}
+{self.translate_text("Individuals Who Opened")}: {self.total_unique_opened}
+{self.translate_text("Individuals Who Clicked")}: {self.total_unique_clicked}
+{self.translate_text("Individuals Who Reported")}: {self.total_unique_reported}
+{self.translate_text("Individuals Who Submitted")}: {self.total_unique_submitted}
 
 """)
         d.add_page_break()
 
         print("[+] Finished writing high level summary...")
         # End of the campaign summary and beginning of the event summary
-        d.add_heading("Summary of Events", 1)
-        d.add_paragraph("The following table summarizes who opened and clicked on emails sent in this campaign.")
+        d.add_heading(self.translate_text("Summary of Events"), 1)
+        d.add_paragraph(self.translate_text("The following table summarizes who opened and clicked on emails sent in this campaign."))
 
         # Create a table to hold the event summary results
         table = d.add_table(rows=len(self.campaign_results_summary) + 1, cols=7, style="GoReport")
 
         header0 = table.cell(0, 0)
         header0.text = ""
-        header0.paragraphs[0].add_run("Email Address", "Cell Text").bold = True
+        header0.paragraphs[0].add_run(self.translate_text("Email Address"), "Cell Text").bold = True
 
         header1 = table.cell(0, 1)
         header1.text = ""
-        header1.paragraphs[0].add_run("Open", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("Open"), "Cell Text").bold = True
 
         header2 = table.cell(0, 2)
         header2.text = ""
-        header2.paragraphs[0].add_run("Click", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Click"), "Cell Text").bold = True
 
         header3 = table.cell(0, 3)
         header3.text = ""
-        header3.paragraphs[0].add_run("Data", "Cell Text").bold = True
+        header3.paragraphs[0].add_run(self.translate_text("Data"), "Cell Text").bold = True
 
         header4 = table.cell(0, 4)
         header4.text = ""
-        header4.paragraphs[0].add_run("Report", "Cell Text").bold = True
+        header4.paragraphs[0].add_run(self.translate_text("Report"), "Cell Text").bold = True
 
         header5 = table.cell(0, 5)
         header5.text = ""
-        header5.paragraphs[0].add_run("OS", "Cell Text").bold = True
+        header5.paragraphs[0].add_run(self.translate_text("OS"), "Cell Text").bold = True
 
         header6 = table.cell(0, 6)
         header6.text = ""
-        header6.paragraphs[0].add_run("Browser", "Cell Text").bold = True
+        header6.paragraphs[0].add_run(self.translate_text("Browser"), "Cell Text").bold = True
 
         # Sort campaign summary by each dict's email entry and then create results table
         target_counter = 0
@@ -1227,7 +1398,7 @@ Individuals Who Submitted: {self.total_unique_submitted}
         # End of the event summary and beginning of the detailed results
         print("[+] Finished writing events summary...")
         print("[+] Detailed results analysis is next and may take some time if you had a lot of targets...")
-        d.add_heading("Detailed Findings", 1)
+        d.add_heading(self.translate_text("Detailed Findings"), 1)
         target_counter = 0
         for target in self.results:
             # Only create a Detailed Analysis section for targets with clicks
@@ -1254,14 +1425,14 @@ Individuals Who Submitted: {self.total_unique_submitted}
                         sent_date = temp[0]
                         sent_time = temp[1].split('.')[0]
                         # Record the email sent date and time in the run created earlier
-                        email_sent_run.text = f"Email sent on {sent_date} at {sent_time}"
+                        email_sent_run.text = f"{self.translate_text("Email sent on")} {sent_date} {self.translate_text("at")} {sent_time}"
 
                     if event.message == "Email Opened" and event.email == target.email:
                         if opened_counter == 1:
                             # Create the Email Opened/Previewed table
                             p = d.add_paragraph()
                             p.style = d.styles['Normal']
-                            run = p.add_run("Email Previews")
+                            run = p.add_run(self.translate_text("Email Previews"))
                             run.bold = True
 
                             opened_table = d.add_table(rows=1, cols=1, style="GoReport")
@@ -1270,7 +1441,7 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
                             header1 = opened_table.cell(0, 0)
                             header1.text = ""
-                            header1.paragraphs[0].add_run("Time", "Cell Text").bold = True
+                            header1.paragraphs[0].add_run(self.translate_text("Time"), "Cell Text").bold = True
 
                         # Begin by adding a row to the table and inserting timestamp
                         opened_table.add_row()
@@ -1284,7 +1455,7 @@ Individuals Who Submitted: {self.total_unique_submitted}
                             # Create the Clicked Link table
                             p = d.add_paragraph()
                             p.style = d.styles['Normal']
-                            run = p.add_run("Email Link Clicked")
+                            run = p.add_run(self.translate_text("Email Link Clicked"))
                             run.bold = True
 
                             clicked_table = d.add_table(rows=1, cols=5, style="GoReport")
@@ -1293,23 +1464,23 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
                             header1 = clicked_table.cell(0, 0)
                             header1.text = ""
-                            header1.paragraphs[0].add_run("Time", "Cell Text").bold = True
+                            header1.paragraphs[0].add_run(self.translate_text("Time"), "Cell Text").bold = True
 
                             header2 = clicked_table.cell(0, 1)
                             header2.text = ""
-                            header2.paragraphs[0].add_run("IP", "Cell Text").bold = True
+                            header2.paragraphs[0].add_run(self.translate_text("IP"), "Cell Text").bold = True
 
                             header3 = clicked_table.cell(0, 2)
                             header3.text = ""
-                            header3.paragraphs[0].add_run("Location", "Cell Text").bold = True
+                            header3.paragraphs[0].add_run(self.translate_text("Location"), "Cell Text").bold = True
 
                             header4 = clicked_table.cell(0, 3)
                             header4.text = ""
-                            header4.paragraphs[0].add_run("Browser", "Cell Text").bold = True
+                            header4.paragraphs[0].add_run(self.translate_text("Browser"), "Cell Text").bold = True
 
                             header5 = clicked_table.cell(0, 4)
                             header5.text = ""
-                            header5.paragraphs[0].add_run("Operating System",
+                            header5.paragraphs[0].add_run(self.translate_text("Operating System"),
                                                           "Cell Text").bold = True
 
                         clicked_table.add_row()
@@ -1346,7 +1517,7 @@ Individuals Who Submitted: {self.total_unique_submitted}
                             # Create the Submitted Data table
                             p = d.add_paragraph()
                             p.style = d.styles['Normal']
-                            run = p.add_run("Data Captured")
+                            run = p.add_run(self.translate_text("Data Captured"))
                             run.bold = True
 
                             submitted_table = d.add_table(rows=1, cols=6, style="GoReport")
@@ -1355,28 +1526,28 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
                             header1 = submitted_table.cell(0, 0)
                             header1.text = ""
-                            header1.paragraphs[0].add_run("Time", "Cell Text").bold = True
+                            header1.paragraphs[0].add_run(self.translate_text("Time"), "Cell Text").bold = True
 
                             header2 = submitted_table.cell(0, 1)
                             header2.text = ""
-                            header2.paragraphs[0].add_run("IP", "Cell Text").bold = True
+                            header2.paragraphs[0].add_run(self.translate_text("IP"), "Cell Text").bold = True
 
                             header3 = submitted_table.cell(0, 2)
                             header3.text = ""
-                            header3.paragraphs[0].add_run("Location", "Cell Text").bold = True
+                            header3.paragraphs[0].add_run(self.translate_text("Location"), "Cell Text").bold = True
 
                             header4 = submitted_table.cell(0, 3)
                             header4.text = ""
-                            header4.paragraphs[0].add_run("Browser", "Cell Text").bold = True
+                            header4.paragraphs[0].add_run(self.translate_text("Browser"), "Cell Text").bold = True
 
                             header5 = submitted_table.cell(0, 4)
                             header5.text = ""
-                            header5.paragraphs[0].add_run("Operating System",
+                            header5.paragraphs[0].add_run(self.translate_text("Operating System"),
                                                           "Cell Text").bold = True
 
                             header6 = submitted_table.cell(0, 5)
                             header6.text = ""
-                            header6.paragraphs[0].add_run("Data Captured",
+                            header6.paragraphs[0].add_run(self.translate_text("Data Captured"),
                                                           "Cell Text").bold = True
 
                         submitted_table.add_row()
@@ -1425,8 +1596,8 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         print("[+] Finished writing Detailed Analysis section...")
         # End of the detailed results and the beginning of browser, location, and OS stats
-        d.add_heading("Statistics", 1)
-        p = d.add_paragraph("The following table shows the browsers seen:")
+        d.add_heading(self.translate_text("Statistics"), 1)
+        p = d.add_paragraph(self.translate_text("The following table shows the browsers seen:"))
         # Create browser table
         browser_table = d.add_table(rows=1, cols=2, style="GoReport")
         self._set_word_column_width(browser_table.columns[0], Cm(7.24))
@@ -1434,13 +1605,13 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         header1 = browser_table.cell(0, 0)
         header1.text = ""
-        header1.paragraphs[0].add_run("Browser", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("Browser"), "Cell Text").bold = True
 
         header2 = browser_table.cell(0, 1)
         header2.text = ""
-        header2.paragraphs[0].add_run("Seen", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Seen"), "Cell Text").bold = True
 
-        p = d.add_paragraph("\nThe following table shows the operating systems seen:")
+        p = d.add_paragraph("\n" + self.translate_text("The following table shows the operating systems seen:"))
 
         # Create OS table
         os_table = d.add_table(rows=1, cols=2, style="GoReport")
@@ -1449,13 +1620,13 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         header1 = os_table.cell(0, 0)
         header1.text = ""
-        header1.paragraphs[0].add_run("Operating System", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("Operating System"), "Cell Text").bold = True
 
         header2 = os_table.cell(0, 1)
         header2.text = ""
-        header2.paragraphs[0].add_run("Seen", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Seen"), "Cell Text").bold = True
 
-        p = d.add_paragraph("\nThe following table shows the locations seen:")
+        p = d.add_paragraph("\n" + self.translate_text("The following table shows the locations seen:"))
 
         # Create geo IP table
         location_table = d.add_table(rows=1, cols=2, style="GoReport")
@@ -1464,13 +1635,13 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         header1 = location_table.cell(0, 0)
         header1.text = ""
-        header1.paragraphs[0].add_run("Location", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("Location"), "Cell Text").bold = True
 
         header2 = location_table.cell(0, 1)
         header2.text = ""
-        header2.paragraphs[0].add_run("Visits", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Visits"), "Cell Text").bold = True
 
-        p = d.add_paragraph("\nThe following table shows the IP addresses captured:")
+        p = d.add_paragraph("\n" + self.translate_text("The following table shows the IP addresses captured:"))
 
         # Create IP address table
         ip_add_table = d.add_table(rows=1, cols=2, style="GoReport")
@@ -1479,13 +1650,13 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         header1 = ip_add_table.cell(0, 0)
         header1.text = ""
-        header1.paragraphs[0].add_run("IP Address", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("IP Address"), "Cell Text").bold = True
 
         header2 = ip_add_table.cell(0, 1)
         header2.text = ""
-        header2.paragraphs[0].add_run("Seen", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Seen"), "Cell Text").bold = True
 
-        p = d.add_paragraph("\nThe following table shows the IP addresses matched with geolocation data:")
+        p = d.add_paragraph("\n" + self.translate_text("The following table shows the IP addresses matched with geolocation data:"))
 
         # Create IP address and location table
         ip_loc_table = d.add_table(rows=1, cols=2, style="GoReport")
@@ -1494,11 +1665,11 @@ Individuals Who Submitted: {self.total_unique_submitted}
 
         header1 = ip_loc_table.cell(0, 0)
         header1.text = ""
-        header1.paragraphs[0].add_run("IP Address", "Cell Text").bold = True
+        header1.paragraphs[0].add_run(self.translate_text("IP Address"), "Cell Text").bold = True
 
         header2 = ip_loc_table.cell(0, 1)
         header2.text = ""
-        header2.paragraphs[0].add_run("Location", "Cell Text").bold = True
+        header2.paragraphs[0].add_run(self.translate_text("Location"), "Cell Text").bold = True
 
         # Counters are used here again to track rows
         counter = 1
