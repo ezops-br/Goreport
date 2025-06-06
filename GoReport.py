@@ -23,6 +23,16 @@ import click
 # Goreport Libraries
 from lib import banners, goreport
 
+import sys
+
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding='utf-8')
+    else:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+except Exception:
+    pass
 
 # Setup an AliasedGroup for CLICK
 class AliasedGroup(click.Group):
