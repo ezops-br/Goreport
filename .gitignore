@@ -1,7 +1,5 @@
 *.DS_Store
 *.pyc
 *.config
-dist
-dist/*
 build
 build/*
