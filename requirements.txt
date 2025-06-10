@@ -6,7 +6,6 @@ python-dateutil
 user-agents
 click
 xlsxwriter
-playwright
 deep-translator
 urllib3==2.4.0
 six==1.17.0
