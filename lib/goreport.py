@@ -35,6 +35,9 @@ from docx.shared import Cm, Pt, RGBColor
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from user_agents import parse
 from deep_translator import GoogleTranslator
+import subprocess
+import platform
+import shutil
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -660,6 +663,47 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
             self.total_reported = reported_counter
             self.total_submitted = submitted_counter
 
+    def convert_docx_to_pdf(self, docx_path):
+        output_dir = os.path.dirname(os.path.abspath(docx_path))
+        soffice_path = "soffice"
+
+        if platform.system() == "Windows":
+            possible_path = r"C:\Program Files\LibreOffice\program\soffice.exe"
+            if os.path.exists(possible_path):
+                soffice_path = possible_path
+        if not shutil.which(soffice_path) and not os.path.exists(soffice_path):
+            print("ERROR:LIBREOFFICE_NOT_FOUND:LibreOffice (soffice) not found. Please install LibreOffice to enable PDF export.")
+            sys.exit(2)
+
+        try:
+            result = subprocess.run([
+                    soffice_path,
+                    "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", output_dir,
+                    docx_path,
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60
+            )
+
+            pdf_path = docx_path.replace(".docx", ".pdf")
+
+            if result.returncode != 0:
+                print(f"[!] LibreOffice conversion failed: {result.stderr.decode()}")
+                return None
+            if os.path.exists(pdf_path):
+                print(f"[+] PDF generated: {pdf_path}")
+                return pdf_path
+            else:
+                print("[!] PDF conversion failed: PDF not found.")
+                return None
+        except Exception as e:
+            print(f"[!] Error converting DOCX to PDF: {e}")
+            return None
+
     def generate_report(self):
         """Determines which type of report generate and the calls the appropriate reporting
         functions.
@@ -676,6 +720,18 @@ Ensure the IDs are provided as comma-separated integers or interger ranges, e.g.
                 print("L.. Word reports can take a while if you had a lot of recipients.")
                 self.output_word_report = self._build_output_word_file_name()
                 self.write_word_report()
+            else:
+                print(f"[!] Could not find the template document! Make sure '{self.template_file}' exists and is readable.")
+                sys.exit()
+        elif self.report_format == "pdf":
+            print("[+] Building the report -- you selected a PDF report.")
+            print(f"[+] Looking for the {self.template_file} to be used for the Word report.")
+            if os.path.isfile(self.template_file):
+                print("[+] Template was found -- proceeding with report generation...")
+                print("L.. PDF reports can take a while if you had a lot of recipients.")
+                self.output_word_report = self._build_output_word_file_name()
+                self.write_word_report()
+                self.convert_docx_to_pdf(self.output_word_report)
             else:
                 print(f"[!] Could not find the template document! Make sure '{self.template_file}' exists and is readable.")
                 sys.exit()

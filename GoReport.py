@@ -71,7 +71,7 @@ def GoReport():
 -- either CSV or DOCX.")
 @click.option('--id', type=click.STRING, is_flag=False, help="The target campaign's ID. You can \
 provide a comma-separated list of IDs (e.g. -id #,#,#).", required=True)
-@click.option('--format', type=click.Choice(['excel', 'word', 'quick']), help="Use this option to \
+@click.option('--format', type=click.Choice(['excel', 'word', 'quick', 'pdf']), help="Use this option to \
 choose between report formats.", required=True)
 @click.option('--template', type=click.Path(exists=True, readable=True, resolve_path=True),
               help="Path to the Word template file to use for docx reports. Defaults to template.docx in the current directory.")
